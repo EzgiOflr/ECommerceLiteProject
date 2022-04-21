@@ -1,18 +1,29 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Web;
 using System.Web.Mvc;
 using ECommerceLiteBLL.Repository;
 using ECommerceLiteUI.Models;
 using Mapster;
+using ECommerceLiteBLL.Account;
+using ECommerceLiteEntity.Models;
+using QRCoder;
+using System.Drawing;
+using ECommerceLiteBLL.Settings;
+using ECommerceLiteEntity.ViewModels;
 
 namespace ECommerceLiteUI.Controllers
 {
-    public class HomeController : Controller
+    public class HomeController : BaseController
     {
         CategoryRepo myCategoryRepo = new CategoryRepo();
         ProductRepo myProductRepo = new ProductRepo();
+        AdminRepo myAdminRepo = new AdminRepo();
+        CustomerRepo myCustomerRepo = new CustomerRepo();
+        OrderRepo myOrderRepo = new OrderRepo();
+        OrderDetailRepo myOrderDetailRepo = new OrderDetailRepo();
 
         public ActionResult Index()
         {
@@ -145,6 +156,176 @@ namespace ECommerceLiteUI.Controllers
                 TempData["AddToCartFailed"] = "Ürün eklemesi başarısızdır. Lütfen tekrar deneyiniz";
                 return RedirectToAction("Index", "Home");
             }
+
+        }
+
+        [Authorize]
+        public async Task<ActionResult> Buy()
+        {
+            try
+            {
+                //1) Eğer müşteri değilsen isen alışveriş yapamazsin!
+                var user = MembershipTools.GetUser();
+                var customer = myCustomerRepo.AsQueryable().FirstOrDefault(x => x.UserId == user.Id); //select cekiyor sql de select from  admins
+                //where UserId= 'buraya userin id si gelir'.
+                if (customer == null)
+                {
+                    TempData["BuyFailed"] = "Alışveriş yapabilmeniz için Müşteri bilgileriniz ile giriş yapmanız gereklidir!";
+                    return RedirectToAction("Index", "Home");
+                }
+                //shoppingcart null mı değil mi?
+
+                var shoppingcart = Session["ShoppingCart"] as List<ProductViewModel>;
+                if (shoppingcart == null)
+                {
+                    TempData["BuyFailed"] = "Alışveriş yapabilmeniz için Sepetinize ürün eklemeniz gereklidir!";
+                    return RedirectToAction("Index", "Home");
+                }
+                ////shoppingcart içerisin de ürün var mı?
+                //if (shoppingcart.Count == 0)
+                //{
+                //    TempData["BuyFailed"] = "Alışveriş sepetinizde ürün bulunmamaktadır";
+                //    return RedirectToAction("Index", "Home");
+                //}
+                //artık alışveriş tamamlansın.
+                Order customerOrder = new Order()
+                {
+                    CustomerTCNumber = customer.TCNumber,
+                    IsDeleted = false,
+                    OrderNumber = customer.TCNumber   //burayı düzeltecegim.
+
+                };
+                //ınsert yapılsın
+                int orderInsertResult = myOrderRepo.Insert(customerOrder);
+                if (orderInsertResult > 0)
+                {
+                    //siparişin detayları orderdatile eklenmeli
+                    int orderDetailsInsertResult = 0;
+                    foreach (var item in shoppingcart)
+                    {
+                        OrderDetail customerOrderDetail = new OrderDetail()
+                        {
+                            OrderId = customerOrder.Id,
+                            IsDeleted = false,
+                            ProductId = item.Id,
+                            ProductPrice = item.Price,
+                            Quantity = item.Quantity,
+                            Discount = item.Discount
+
+                        };
+
+                        //Total Count Hesabi:
+                        if (item.Discount > 0)
+                        {
+                            customerOrderDetail.TotalPrice =
+                                customerOrderDetail.Quantity *
+                                (customerOrderDetail.ProductPrice -
+                                (customerOrderDetail.ProductPrice *
+                                ((decimal)customerOrderDetail.Discount / 100)
+                                ));
+                        }
+                        else
+                        {
+                            //3 adet telefon
+                            customerOrderDetail.TotalPrice =
+                                customerOrderDetail.Quantity * customerOrderDetail.ProductPrice;
+                        }
+
+                        //orderdetail tabloya insert edilsin
+                        orderDetailsInsertResult += myOrderDetailRepo.Insert(customerOrderDetail);
+
+                    }
+                    //OrderDetailsInsertResult büyükse sıfırdan 
+                    if (orderDetailsInsertResult > 0 && orderDetailsInsertResult == shoppingcart.Count)
+                    {
+                        //QR kodu eklenmiş Email gönderilecek.
+                        #region SendOrderEmailWithQR
+                        QRCodeGenerator myQRCodeGenerator = new QRCodeGenerator();
+                        QRCodeData myQRCodeData = myQRCodeGenerator.CreateQrCode(customerOrder.OrderNumber, QRCodeGenerator.ECCLevel.Q);
+                        QRCode myQRCode = new QRCode(myQRCodeData);
+                        Bitmap QRBitmap = myQRCode.GetGraphic(60);
+
+
+                        byte[] bitmapArray = BitmapToByteArray(QRBitmap);
+                        string qrUri = string.Format("data:image/png;base64,{0}",
+                        Convert.ToBase64String(bitmapArray));
+
+                        //email de gidecek olan ürünlerin listeye alalım 
+                        List<OrderDetail> orderList = new List<OrderDetail>();
+                        orderList = myOrderDetailRepo.AsQueryable().Where(x => x.OrderId == customerOrder.Id).ToList();
+
+                        string message = $"Merhaba [{user.Name} {user.Surname} <br/><br/>" +
+                          $"{orderList.Count} adet ürünlerinizin siparişini aldık. <br/>" +
+                          $"Toplam Tutar:{orderList.Sum(x => x.TotalPrice)}₺ <br/> <br/>" +
+                          $"Sipariş Numarası: {customerOrder.OrderNumber}<br/><br/>" +
+                          $"<table><tr><th>Ürün Adı</th><th>Adet</th><th>Birim Fiyat</th>" +
+                          $"<th>İndirim</th><th>Toplam</th></tr>";
+
+                        foreach (var item in orderList)
+                        {
+                            var product = myProductRepo.GetById(item.ProductId);
+
+                            message += $"<tr><td>{ product.ProductName}</td>"
+                            + $"<tr><td>{item.Quantity}</td>"
+                            + $"<tr><td>{item.ProductPrice} ₺</td>"
+                            + $"<tr><td>{ item.Discount} % </td>"
+                            + $"<tr><td>{ item.TotalPrice}₺</td></tr>";
+                        }
+                        string siteUrl =
+                                Request.Url.Scheme + Uri.SchemeDelimiter
+                              + Request.Url.Host
+                              + (Request.Url.IsDefaultPort ? "" : ":" + Request.Url.Port);
+                        message+=$"</table><br/>Siparişinize ait QR kodunuz: <br/><br/>"
+                          +$"<a href='{siteUrl}/Home/Order/{customerOrder.Id}'>" +
+                          $"<img src=\"{qrUri}\" height=250px;  width=250px; class='img-thumbnail' /></a>";
+                        await SiteSettings.SendMail(new MailModel()
+                        {
+                            To = user.Email,
+                            Subject = "ECommerceLite 303 - Siparişiniz alındı",
+                            Message = message
+
+                        });
+                        TempData["BuySuccess"] = "Siparişiniz oluşturuldu.Sipariş numarası:" +customerOrder.OrderNumber;
+                        return RedirectToAction("Index", "Home");
+                        #endregion
+                       
+                    }
+                    else
+                    {
+                        //sistem yöneticisine orderId detayı verilerek
+                        //email gönderilsin. eklenmeyen ürünleri acilen eklesinler.
+                        var message = $"merhaba Admin, <br/>" +
+                            $"Aşağıdaki bilgileri verilen siparişin kendisi oluşturulmasına rağmen detaylarından bazıları oluşturulamadı." +
+                            $"Acilen müdahale edelim.<br/><br/>" +
+                            $"OrderId:{customerOrder.Id} <br/>";
+                        for (int i = 1; i <= shoppingcart.Count; i++)
+                        {
+                            message += $"{i}- Id: {shoppingcart[i].Id}"
+                                + $"Birim Fiyat: {shoppingcart[i].Price}-"
+                                + $"Sipariş adedi: {shoppingcart[i].Quantity}-"
+                                + $"İndirimi: {shoppingcart[i].Discount}-" +
+                                $"<br/><br/>";
+                        }
+
+                        await SiteSettings.SendMail(new MailModel()
+                        {
+                            To = "nayazilim@gmail.com",
+                            Subject = "ECommerceLite 303 SİPARİŞ DETAY SORUNU  ",
+                            Message = message
+
+                        });
+                    }
+                }
+                return RedirectToAction("Index", "Home");
+            }
+            catch (Exception)
+            {
+                //ex loglanacak
+                TempData["BuyFailed"] = "Beklenmedik bir hata nedeniyle siparişiniz oluşturulamadı";
+                return RedirectToAction("Index", "Home");
+            }
+
+
 
         }
     }
