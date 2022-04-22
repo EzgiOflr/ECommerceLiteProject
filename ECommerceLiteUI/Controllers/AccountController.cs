@@ -15,6 +15,7 @@ using ECommerceLiteEntity.Enums;
 using System.Threading.Tasks;
 using ECommerceLiteEntity.ViewModels;
 using Microsoft.Owin.Security;
+using ECommerceLiteUI.LogManaging;
 
 namespace ECommerceLiteUI.Controllers
 {
@@ -483,6 +484,9 @@ namespace ECommerceLiteUI.Controllers
                     ).Id)
 
                 {
+                    //an admin has entered the system
+                    Logger.LogMessage("sisteme bir admin girdi." , "Account/Login", user.Id);
+
                     return RedirectToAction("Dashboard", "Admin");
                 }
 
@@ -492,10 +496,12 @@ namespace ECommerceLiteUI.Controllers
                     ).Id)
 
                 {
+                    Logger.LogMessage("sisteme bir müşteri girdi.", "Account/Login", user.Id);
                     return RedirectToAction("Index", "Home");
                 }
                 if (string.IsNullOrEmpty(model.ReturnUrl))
                 {
+
                     return RedirectToAction("Index", "Home");
                 }
 
@@ -513,7 +519,9 @@ namespace ECommerceLiteUI.Controllers
             }
             catch (Exception ex)
             {
-                //ex loglanacak
+
+                Logger.LogMessage($"Giriş yaparken hata olmuş:\n {ex.ToString()}"
+                , "Account/Login",model.Email);
                 ModelState.AddModelError("", "Beklenmedik hata oluştu! Tekrar deneyiniz!");
                 return View(model);
             }
