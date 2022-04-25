@@ -23,10 +23,10 @@ namespace ECommerceLiteEntity.Models
 
         //public Nullable<int> BaseCategoryId { get; set; }
 
-        [ForeignKey("BaseCategoryId")]
-        public virtual Category BaseCategory { get; set; }
+        //[ForeignKey("BaseCategoryId")]
+        //public virtual Category BaseCategory { get; set; }
 
-        public virtual List<Category> CategoryList { get; set; }
+        //public virtual List<Category> CategoryList { get; set; }
 
         // Her ürünün bir kategorisi olur cümlesinden yola çıkarak 
         //Productta tanımlanan ilişkiyi burada karşılayalım

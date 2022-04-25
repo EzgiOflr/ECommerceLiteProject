@@ -164,7 +164,7 @@ namespace ECommerceLiteBLL.Settings
                 smtp.Host = SiteMailSmtpHost;
                 smtp.Port = SiteMailSmtpPort;
                 smtp.EnableSsl = true;
-                smtp.Send(message);
+               // smtp.Send(message);
 
             }
             catch (Exception)
